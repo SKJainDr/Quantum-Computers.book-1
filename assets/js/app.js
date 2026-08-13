@@ -1,0 +1,347 @@
+/* Quantum Computers — reader app
+   Handles: theme toggle, chapter loading/rendering, sidebar + on-page TOC,
+   read-aloud (Web Speech API) with sentence highlighting, deep-linking. */
+
+(function () {
+  "use strict";
+
+  /* ---------------- CONTENT-PROTECTION CONFIG ----------------
+     Edit WATERMARK_NAME to change whose name appears on every page.
+     The date stamp is generated live from the visitor's system clock,
+     so it reflects the day the page was actually viewed/screenshotted. */
+  const WATERMARK_NAME = "© Dr. S. K. Jain";
+
+  /* ---------------- CONTENT PROTECTION ---------------- */
+  (function contentProtection() {
+    const watermarkLayer = document.getElementById("watermarkLayer");
+    function paintWatermark() {
+      const stamp = `${WATERMARK_NAME} · ${new Date().toLocaleDateString(undefined, { year: "numeric", month: "short", day: "2-digit" })}`;
+      const tile = Array(48).fill(`<span>${stamp}</span>`).join("");
+      watermarkLayer.innerHTML = tile;
+    }
+    paintWatermark();
+    // refresh at local midnight so a page left open overnight still stamps the correct day
+    setInterval(paintWatermark, 60 * 60 * 1000);
+
+    // Block right-click, text selection copy, cut, drag, and common save/print/devtools shortcuts.
+    // Note: none of this stops someone who opens dev tools or views page source deliberately —
+    // it deters casual copy/paste and printing, it does not encrypt or hide the content.
+    document.addEventListener("contextmenu", (e) => e.preventDefault());
+    document.addEventListener("copy", (e) => e.preventDefault());
+    document.addEventListener("cut", (e) => e.preventDefault());
+    document.addEventListener("dragstart", (e) => e.preventDefault());
+    document.addEventListener("keydown", (e) => {
+      const k = e.key.toLowerCase();
+      const blockedCombo =
+        (e.ctrlKey || e.metaKey) && ["c", "x", "s", "p", "u"].includes(k) ||
+        ((e.ctrlKey || e.metaKey) && e.shiftKey && ["i", "j", "c"].includes(k)) ||
+        e.key === "F12" || e.key === "PrintScreen";
+      if (blockedCombo) e.preventDefault();
+    });
+  })();
+
+  const els = {
+    root: document.body,
+    chapterNav: document.getElementById("chapterNav"),
+    chapterFilter: document.getElementById("chapterFilter"),
+    chapterContent: document.getElementById("chapterContent"),
+    chapterLabel: document.getElementById("chapterLabel"),
+    chapterPager: document.getElementById("chapterPager"),
+    pageTocList: document.getElementById("pageTocList"),
+    progressBar: document.getElementById("progressBar"),
+    themeToggle: document.getElementById("themeToggle"),
+    iconSun: document.getElementById("iconSun"),
+    iconMoon: document.getElementById("iconMoon"),
+    sidebar: document.getElementById("sidebar"),
+    sidebarToggle: document.getElementById("sidebarToggle"),
+    playBtn: document.getElementById("playBtn"),
+    stopBtn: document.getElementById("stopBtn"),
+    rateSelect: document.getElementById("rateSelect"),
+    iconPlay: document.getElementById("iconPlay"),
+    iconPause: document.getElementById("iconPause"),
+    main: document.getElementById("main"),
+  };
+
+  let manifest = [];
+  let currentIndex = 0;
+  const mdCache = new Map();
+
+  /* ---------------- THEME ---------------- */
+  function applyTheme(theme) {
+    els.root.setAttribute("data-theme", theme);
+    localStorage.setItem("qc-theme", theme);
+    const isDark = theme === "dark";
+    els.iconSun.style.display = isDark ? "none" : "block";
+    els.iconMoon.style.display = isDark ? "block" : "none";
+  }
+  (function initTheme() {
+    const saved = localStorage.getItem("qc-theme");
+    // Light is the default: it's the book's actual appearance (white page, black text).
+    // Dark is available via the toggle for low-light reading.
+    applyTheme(saved || "light");
+  })();
+  els.themeToggle.addEventListener("click", () => {
+    const next = els.root.getAttribute("data-theme") === "dark" ? "light" : "dark";
+    applyTheme(next);
+  });
+
+  /* ---------------- SIDEBAR (mobile) ---------------- */
+  els.sidebarToggle.addEventListener("click", () => {
+    const open = els.sidebar.classList.toggle("open");
+    els.sidebarToggle.setAttribute("aria-expanded", String(open));
+  });
+  document.addEventListener("click", (e) => {
+    if (window.innerWidth > 880) return;
+    if (!els.sidebar.contains(e.target) && !els.sidebarToggle.contains(e.target)) {
+      els.sidebar.classList.remove("open");
+    }
+  });
+
+  /* ---------------- MANIFEST + NAV ---------------- */
+  async function loadManifest() {
+    const res = await fetch("content/manifest.json");
+    manifest = await res.json();
+    els.chapterNav.innerHTML = manifest
+      .map((ch, i) => {
+        const num = ch.file.split("-")[0];
+        return `<a href="#/${ch.file}" data-index="${i}"><span class="num">${num === "00" ? "Front" : num === "11" ? "Back" : "Ch. " + parseInt(num, 10)}</span>${ch.title.replace(/^Chapter \d+ — /, "")}</a>`;
+      })
+      .join("");
+  }
+
+  els.chapterFilter.addEventListener("input", () => {
+    const q = els.chapterFilter.value.trim().toLowerCase();
+    [...els.chapterNav.children].forEach((a) => {
+      a.classList.toggle("hidden", q && !a.textContent.toLowerCase().includes(q));
+    });
+  });
+
+  /* ---------------- MARKDOWN LOAD + RENDER ---------------- */
+  async function fetchMarkdown(file) {
+    if (mdCache.has(file)) return mdCache.get(file);
+    const res = await fetch(`content/${file}`);
+    if (!res.ok) throw new Error("Could not load " + file);
+    const text = await res.text();
+    mdCache.set(file, text);
+    return text;
+  }
+
+  function slugify(str) {
+    return str
+      .toLowerCase()
+      .replace(/[^\w\s-]/g, "")
+      .trim()
+      .replace(/\s+/g, "-")
+      .slice(0, 64);
+  }
+
+  async function renderChapter(index, opts = {}) {
+    if (index < 0 || index >= manifest.length) return;
+    currentIndex = index;
+    stopReading();
+
+    const ch = manifest[index];
+    els.chapterContent.innerHTML = `<p class="loading-msg">Loading ${ch.title}…</p>`;
+    els.chapterLabel.textContent = ch.title;
+
+    let md;
+    try {
+      md = await fetchMarkdown(ch.file);
+    } catch (err) {
+      els.chapterContent.innerHTML = `<p class="loading-msg">Could not load this chapter (${err.message}). If you're viewing this from disk, serve the folder with a local server — see README.</p>`;
+      return;
+    }
+
+    const html = marked.parse(md, { headerIds: false, mangle: false });
+    els.chapterContent.innerHTML = html;
+
+    // assign ids to headings for TOC + deep links
+    const headings = els.chapterContent.querySelectorAll("h1, h2, h3, h4");
+    const tocEntries = [];
+    headings.forEach((h) => {
+      const id = slugify(h.textContent) || Math.random().toString(36).slice(2, 8);
+      let uid = id, n = 1;
+      while (document.getElementById(uid)) uid = id + "-" + n++;
+      h.id = uid;
+      tocEntries.push({ id: uid, text: h.textContent, level: h.tagName.slice(1) });
+    });
+    buildPageToc(tocEntries);
+    buildPager(index);
+    highlightActiveNav(index);
+
+    if (!opts.skipScroll) {
+      els.main.scrollTo({ top: 0 });
+      if (opts.hash) {
+        const target = document.getElementById(opts.hash);
+        if (target) target.scrollIntoView({ block: "start" });
+      }
+    }
+    document.title = `${ch.title} — Quantum Computers | Dr. S. K. Jain`;
+  }
+
+  function buildPageToc(entries) {
+    if (!entries.length) {
+      els.pageTocList.innerHTML = `<p style="color:var(--text-faint);font-size:12px;">No subsections</p>`;
+      return;
+    }
+    els.pageTocList.innerHTML = entries
+      .filter((e) => e.level !== "1")
+      .map((e) => `<a href="#${e.id}" data-level="${e.level}">${e.text}</a>`)
+      .join("");
+  }
+
+  function buildPager(index) {
+    const prev = manifest[index - 1];
+    const next = manifest[index + 1];
+    els.chapterPager.innerHTML = `
+      ${prev ? `<a class="pager-link prev" href="#/${prev.file}"><span class="pager-dir">← Previous</span>${prev.title}</a>` : "<span></span>"}
+      ${next ? `<a class="pager-link next" href="#/${next.file}"><span class="pager-dir">Next →</span>${next.title}</a>` : "<span></span>"}
+    `;
+  }
+
+  function highlightActiveNav(index) {
+    [...els.chapterNav.children].forEach((a, i) => a.classList.toggle("active", i === index));
+  }
+
+  /* ---------------- ROUTING ---------------- */
+  function parseHash() {
+    const raw = decodeURIComponent(location.hash.replace(/^#\/?/, ""));
+    const [file, hash] = raw.split("#");
+    return { file: file || manifest[0]?.file, hash };
+  }
+
+  async function route() {
+    if (!manifest.length) return;
+    const { file, hash } = parseHash();
+    const index = Math.max(0, manifest.findIndex((c) => c.file === file));
+    await renderChapter(index === -1 ? 0 : index, { hash });
+  }
+
+  window.addEventListener("hashchange", route);
+
+  els.chapterNav.addEventListener("click", () => {
+    if (window.innerWidth <= 880) els.sidebar.classList.remove("open");
+  });
+
+  /* ---------------- SCROLL PROGRESS + ON-PAGE TOC ACTIVE STATE ---------------- */
+  els.main.addEventListener("scroll", () => {
+    const el = els.main;
+    const pct = (el.scrollTop / (el.scrollHeight - el.clientHeight || 1)) * 100;
+    els.progressBar.style.width = Math.min(100, Math.max(0, pct)) + "%";
+
+    const headings = [...els.chapterContent.querySelectorAll("h2, h3, h4")];
+    let activeId = null;
+    for (const h of headings) {
+      if (h.getBoundingClientRect().top - els.main.getBoundingClientRect().top < 90) activeId = h.id;
+    }
+    [...els.pageTocList.children].forEach((a) => {
+      a.classList.toggle("active", a.getAttribute("href") === "#" + activeId);
+    });
+  });
+
+  /* ---------------- READ ALOUD ---------------- */
+  const synth = window.speechSynthesis;
+  let utterQueue = [];
+  let utterIndex = 0;
+  let speaking = false;
+  let paused = false;
+  let currentMark = null;
+
+  function getReadableChunks() {
+    // split the current chapter into paragraph-level chunks for natural pacing + highlighting
+    const blocks = els.chapterContent.querySelectorAll(
+      "h1, h2, h3, h4, p, li, blockquote, .box .box-title, .box p, figcaption"
+    );
+    return [...blocks].filter((b) => b.textContent.trim().length > 0);
+  }
+
+  function clearHighlight() {
+    if (currentMark) {
+      currentMark.classList.remove("reading-word");
+      currentMark = null;
+    }
+  }
+
+  function speakFrom(startIdx) {
+    if (!synth) return;
+    const chunks = getReadableChunks();
+    if (!chunks.length) return;
+    utterIndex = startIdx;
+
+    function speakNext() {
+      clearHighlight();
+      if (utterIndex >= chunks.length) {
+        stopReading();
+        // auto-advance to next chapter
+        const next = manifest[currentIndex + 1];
+        if (next) location.hash = "#/" + next.file;
+        return;
+      }
+      const block = chunks[utterIndex];
+      block.scrollIntoView({ block: "center", behavior: "smooth" });
+      block.classList.add("reading-word");
+      currentMark = block;
+
+      const utter = new SpeechSynthesisUtterance(block.textContent);
+      utter.rate = parseFloat(els.rateSelect.value || "1");
+      utter.onend = () => {
+        if (!speaking || paused) return;
+        utterIndex++;
+        speakNext();
+      };
+      utter.onerror = () => {};
+      synth.speak(utter);
+    }
+    speakNext();
+  }
+
+  function startReading() {
+    if (!synth) {
+      alert("Your browser does not support the Web Speech API for read-aloud.");
+      return;
+    }
+    synth.cancel();
+    speaking = true;
+    paused = false;
+    els.playBtn.classList.add("speaking");
+    els.iconPlay.style.display = "none";
+    els.iconPause.style.display = "block";
+    speakFrom(0);
+  }
+
+  function togglePause() {
+    if (!speaking) return startReading();
+    if (paused) {
+      paused = false;
+      synth.resume();
+      els.iconPlay.style.display = "none";
+      els.iconPause.style.display = "block";
+    } else {
+      paused = true;
+      synth.pause();
+      els.iconPlay.style.display = "block";
+      els.iconPause.style.display = "none";
+    }
+  }
+
+  function stopReading() {
+    speaking = false;
+    paused = false;
+    if (synth) synth.cancel();
+    clearHighlight();
+    els.playBtn.classList.remove("speaking");
+    els.iconPlay.style.display = "block";
+    els.iconPause.style.display = "none";
+  }
+
+  els.playBtn.addEventListener("click", togglePause);
+  els.stopBtn.addEventListener("click", stopReading);
+  window.addEventListener("hashchange", stopReading);
+
+  /* ---------------- INIT ---------------- */
+  (async function init() {
+    await loadManifest();
+    if (!location.hash) location.hash = "#/" + manifest[0].file;
+    await route();
+  })();
+})();
