@@ -42,6 +42,7 @@
   --h2-color: #1A2E4A;
   --h3-color: #1565C0;
   --img-panel-bg: #FFFFFF;
+  --watermark-opacity: 0.16;
 }
 
 /* ---------- DARK ---------- */
@@ -65,6 +66,7 @@
   --h2-color: #C9D6EA;
   --h3-color: #7FB4EE;
   --img-panel-bg: #F7F6F2;
+  --watermark-opacity: 0.22;
 }
 
 *{ box-sizing: border-box; }
@@ -87,23 +89,24 @@ input, select, textarea{ user-select: text; -webkit-user-select: text; }
 ::selection{ background: var(--selection); }
 
 /* ---------- WATERMARK ----------
-   Fixed, tiled, low-opacity layer sitting above the content so it is
-   captured by any screenshot or screen recording. Purely visual — it
-   is not, and cannot be, a technical copy-protection mechanism. */
+   Fixed, tiled layer sitting above the content so it is captured by any
+   screenshot or screen recording. Purely visual — it is not, and cannot
+   be, a technical copy-protection mechanism. Opacity is tuned per theme
+   since the same value reads very differently on white vs near-black. */
 .watermark-layer{
   position: fixed; inset: 0; z-index: 300;
   pointer-events: none;
   display: flex; flex-wrap: wrap; align-content: space-between;
   overflow: hidden;
   transform: rotate(-22deg) scale(1.3);
-  opacity: 0.07;
+  opacity: var(--watermark-opacity, 0.16);
 }
 .watermark-layer span{
-  font-family: var(--font-ui);
-  font-size: 13px;
+  font-family: var(--font-ui); font-weight:700;
+  font-size: 26px;
   white-space: nowrap;
   color: var(--text);
-  margin: 34px 26px;
+  margin: 46px 34px;
 }
 
 .skip-link{
@@ -203,6 +206,29 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   background: transparent; border:none; color: var(--text-dim);
 }
 #playBtn.speaking{ color: var(--accent); background: color-mix(in srgb, var(--accent) 16%, transparent); }
+
+/* ---------- LIKE BUTTON ---------- */
+.like-btn{
+  width:auto; padding:0 12px; gap:6px; border-radius:999px;
+  background: var(--bg-inset); border:1px solid var(--border); color: #D9455F;
+  display:flex; align-items:center; transition: background .15s, transform .1s;
+}
+.like-btn:hover{ background: color-mix(in srgb, #D9455F 12%, var(--bg-inset)); }
+.like-btn:active{ transform: scale(0.94); }
+.like-btn svg{ flex:none; }
+.like-btn.liked{ color:#FFFFFF; background:#D9455F; border-color:#D9455F; }
+.like-btn.liked svg path{ fill: currentColor; }
+.like-btn .like-count{
+  font-family: var(--font-ui); font-size:12.5px; font-weight:700; min-width:14px; text-align:left;
+}
+@keyframes like-pop{ 0%{ transform:scale(1); } 40%{ transform:scale(1.35); } 100%{ transform:scale(1); } }
+.like-btn.liked svg{ animation: like-pop .35s ease; }
+
+/* ---------- VISITOR COUNTER ---------- */
+.visitor-counter{
+  margin-top:6px !important; font-family: var(--font-ui); font-size:11px !important;
+  color: var(--text-faint) !important;
+}
 
 .reading-progress{ height:2px; background: transparent; }
 .reading-progress-bar{ height:100%; width:0%; background: linear-gradient(90deg, var(--accent), var(--gold)); transition: width .1s linear; }

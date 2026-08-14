@@ -338,7 +338,69 @@
   els.stopBtn.addEventListener("click", stopReading);
   window.addEventListener("hashchange", stopReading);
 
+  /* ---------------- VISITOR COUNTER + LIKE BUTTON ----------------
+     Backed by Abacus (abacus.jasoncameron.dev), a free, no-signup counting
+     API — increments/reads are simple GET requests, no key required. The
+     namespace should stay unique to this book to avoid collisions with
+     other sites using the same free service; change it if you fork this. */
+  const COUNTER_NAMESPACE = "qc-series-vol1-skjain";
+  const ABACUS_BASE = "https://abacus.jasoncameron.dev";
+
+  const likeBtn = document.getElementById("likeBtn");
+  const likeCountEl = document.getElementById("likeCount");
+  const visitorCountEl = document.getElementById("visitorCount");
+  const LIKE_STORAGE_KEY = "qc-liked";
+
+  async function initVisitorCounter() {
+    if (!visitorCountEl) return;
+    try {
+      const res = await fetch(`${ABACUS_BASE}/hit/${COUNTER_NAMESPACE}/pageviews`);
+      const data = await res.json();
+      visitorCountEl.textContent = data.value.toLocaleString();
+    } catch (err) {
+      visitorCountEl.textContent = "—";
+    }
+  }
+
+  async function initLikeButton() {
+    if (!likeBtn) return;
+    const alreadyLiked = localStorage.getItem(LIKE_STORAGE_KEY) === "1";
+    if (alreadyLiked) likeBtn.classList.add("liked");
+
+    try {
+      const res = await fetch(`${ABACUS_BASE}/get/${COUNTER_NAMESPACE}/likes`);
+      if (res.ok) {
+        const data = await res.json();
+        likeCountEl.textContent = data.value.toLocaleString();
+      } else {
+        likeCountEl.textContent = "0";
+      }
+    } catch (err) {
+      likeCountEl.textContent = "—";
+    }
+
+    likeBtn.addEventListener("click", async () => {
+      if (localStorage.getItem(LIKE_STORAGE_KEY) === "1") return; // like once per visitor
+      likeBtn.classList.add("liked");
+      localStorage.setItem(LIKE_STORAGE_KEY, "1");
+      const prev = parseInt(likeCountEl.textContent.replace(/,/g, ""), 10) || 0;
+      likeCountEl.textContent = (prev + 1).toLocaleString(); // optimistic update
+      try {
+        const res = await fetch(`${ABACUS_BASE}/hit/${COUNTER_NAMESPACE}/likes`);
+        const data = await res.json();
+        likeCountEl.textContent = data.value.toLocaleString();
+      } catch (err) {
+        /* optimistic value already shown; harmless if the request fails */
+      }
+    });
+  }
+
   /* ---------------- INIT ---------------- */
+  // Visitor counter and like button are independent of chapter loading, so a
+  // manifest/content failure never prevents them from initializing.
+  initVisitorCounter();
+  initLikeButton();
+
   (async function init() {
     await loadManifest();
     if (!location.hash) location.hash = "#/" + manifest[0].file;
