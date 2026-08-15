@@ -338,6 +338,26 @@
   els.stopBtn.addEventListener("click", stopReading);
   window.addEventListener("hashchange", stopReading);
 
+  /* ---------------- SERIES CROSS-LINKS ----------------
+     Each site in the series links to its sibling volume(s) here. This site
+     doesn't know the sibling's deployed URL automatically — fill in the
+     real GitHub Pages URL(s) below once every volume is live. Until then,
+     the link is inert (points to "#") rather than guessing a URL. */
+  const SERIES_LINKS = [
+      {
+          label: "Volume II — Quantum Algorithms & Complexity", url: "https://skjaindr.github.io/Quantum-Computing.book-2/" }, // TODO: set to your deployed Volume II URL
+  ];
+
+  function initSeriesLinks() {
+    const container = document.getElementById("seriesLinks");
+    if (!container || !SERIES_LINKS.length) return;
+    const items = SERIES_LINKS.map(
+      (l) =>
+        `<a href="${l.url}"><svg class="vol-icon" width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M4 4.5A2.5 2.5 0 0 1 6.5 2H20v17H6.5A2.5 2.5 0 0 0 4 21.5v-17z" stroke="currentColor" stroke-width="1.5"/><path d="M4 19V4.5" stroke="currentColor" stroke-width="1.5"/></svg><span>${l.label}</span></a>`
+    ).join("");
+    container.innerHTML = `<p class="series-links-title">More in this series</p>${items}`;
+  }
+
   /* ---------------- VISITOR COUNTER + LIKE BUTTON ----------------
      Backed by Abacus (abacus.jasoncameron.dev), a free, no-signup counting
      API — increments/reads are simple GET requests, no key required. The
@@ -400,6 +420,7 @@
   // manifest/content failure never prevents them from initializing.
   initVisitorCounter();
   initLikeButton();
+  initSeriesLinks();
 
   (async function init() {
     await loadManifest();

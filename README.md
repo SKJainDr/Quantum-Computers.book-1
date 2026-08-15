@@ -35,6 +35,20 @@ A self-contained GitHub Pages site for **Quantum Computers: Principles, Qubits, 
 - **Visitor counter** (sidebar footer) and **like button** (top bar, red heart) — see "Visitor counter & like button" below for how these work and how to configure them
 - Responsive: collapses to a slide-out sidebar on mobile
 
+## Cross-linking the series
+
+The sidebar has a "More in this series" section linking to the sibling volume — but since each book is a separate GitHub Pages site, this repo has no way to know the sibling's URL automatically. The link points to `#` (inert) until you fill it in.
+
+**After you've deployed both volumes**, open `assets/js/app.js`, find the `SERIES_LINKS` constant near the top of the visitor-counter/like-button section, and replace the placeholder `url: "#"` with the sibling's real GitHub Pages URL, e.g.:
+
+```js
+const SERIES_LINKS = [
+  { label: "Volume II — Quantum Algorithms & Complexity", url: "https://your-username.github.io/quantum-algorithms-book-site/" },
+];
+```
+
+If you add more volumes to the series later, add more entries to this same array — each renders as its own link.
+
 ## Visitor counter & like button
 
 Both are backed by [Abacus](https://abacus.jasoncameron.dev), a free counting API that needs no signup or API key — just a GET request. This was chosen deliberately: the older standard for this (CountAPI) shut down on August 7, 2026, so I verified Abacus was actually live before wiring it in rather than assuming.
